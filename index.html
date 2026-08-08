@@ -577,6 +577,7 @@
        ========================================================================= */
     const STORAGE_KEY = 'attendease_pro_v1';
     const SESSION_KEY = 'attendease_pro_session';
+    const LAST_PAGE_KEY = 'attendease_pro_last_page';
     const STATUS_META = {
       present: { label: 'Present', abbr: 'P', color: 'present' },
       absent: { label: 'Absent', abbr: 'A', color: 'absent' },
@@ -585,6 +586,37 @@
       late: { label: 'Late', abbr: 'Lt', color: 'late' },
     };
     const AVATAR_COLORS = ['#5B4CF5', '#0FA968', '#F5A524', '#0EA5E9', '#9333EA', '#F0435E', '#14B8A6', '#EA580C'];
+    const STREAM_SUBJECTS = {
+      Arts: ['History', 'Political Science', 'Geography', 'Economics', 'Psychology', 'Sociology', 'Philosophy', 'Fine Arts / Music', 'Physical Education', 'Information Technology'],
+      Commerce: ['Accountancy', 'Business Studies', 'Economics', 'English', 'Mathematics', 'Computer Science', 'Information Technology', 'Physical Education'],
+      Medical: ['Physics', 'Chemistry', 'Biology'],
+      'Non-Medical': ['Physics', 'Chemistry', 'Maths', 'Computer Science', 'Information Technology'],
+    };
+    const EXAM_TYPES = ['Unit Test 1', 'Unit Test 2', 'Unit Test 3', 'Midterm', 'Pre-Board', 'Final Exam / Board'];
+    function isStreamClass(classId) {
+      const cl = DATA.classes.find(c => c.id === classId);
+      return !!(cl && /\b(11|12)\b/.test(cl.name));
+    }
+    function streamFieldHtml(s) {
+      const cl0 = DATA.classes.find(c => c.id === (s?.classId || DATA.classes[0]?.id));
+      const show = cl0 && /\b(11|12)\b/.test(cl0.name);
+      return `<div class="col-span-2" id="stream-field-wrap" style="${show ? '' : 'display:none'}">
+      <label>Stream</label>
+      <select id="f-stream" onchange="App.renderStreamSubjects(this.value)">
+        <option value="">Select stream…</option>
+        ${Object.keys(STREAM_SUBJECTS).map(k => `<option value="${k}" ${s?.stream === k ? 'selected' : ''}>${k}</option>`).join('')}
+      </select>
+      <div id="stream-subjects-preview" class="mt-2 flex flex-wrap gap-1">${(s?.stream ? STREAM_SUBJECTS[s.stream] : []).map(sub => `<span class="pill" style="background:var(--primary-soft);color:var(--primary)">${sub}</span>`).join('')}</div>
+    </div>`;
+    }
+    function renderStreamSubjects(stream) {
+      const box = document.getElementById('stream-subjects-preview'); if (!box) return;
+      box.innerHTML = (STREAM_SUBJECTS[stream] || []).map(sub => `<span class="pill" style="background:var(--primary-soft);color:var(--primary)">${sub}</span>`).join('');
+    }
+    function toggleStreamFieldForClass(classId) {
+      const wrap = document.getElementById('stream-field-wrap'); if (!wrap) return;
+      wrap.style.display = isStreamClass(classId) ? '' : 'none';
+    }
 
     let DATA = null;
     let SESSION = null;
@@ -779,7 +811,7 @@
     }
     function openSidebar() { document.getElementById('sidebar').classList.add('open'); document.getElementById('sidebar-overlay').classList.add('open'); }
     function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('open'); }
-    function toggleTheme() { applyTheme(DATA.meta.theme === 'dark' ? 'light' : 'dark'); DATA.meta.theme = DATA.meta.theme === 'dark' ? 'light' : 'dark'; save(); }
+    function toggleTheme() { const next = DATA.meta.theme === 'dark' ? 'light' : 'dark'; applyTheme(next); save(); }
     function applyTheme(t) {
       document.documentElement.classList.toggle('dark', t === 'dark');
       DATA.meta.theme = t;
@@ -789,6 +821,7 @@
     }
     function nav(page) {
       UI.page = page; closeSidebar();
+      try { localStorage.setItem(LAST_PAGE_KEY, page); } catch (e) { }
       NAV_ITEMS.forEach(it => document.getElementById('nav-' + it.id)?.classList.toggle('active', it.id === page));
       document.getElementById('page-title').textContent = NAV_ITEMS.find(i => i.id === page)?.label || page;
       const renderers = {
@@ -820,6 +853,34 @@
     }
     document.addEventListener('click', e => {
       if (!e.target.closest('#global-search') && !e.target.closest('#global-search-results')) document.getElementById('global-search-results')?.classList.add('hidden');
+    });
+    /* ---------- Enter key = Save, everywhere ---------- */
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const tag = e.target.tagName;
+      if (tag !== 'INPUT' && tag !== 'SELECT') return; // let textareas keep normal newline behavior
+      if (e.target.closest('#auth-screen')) { e.preventDefault(); authSubmit(); return; }
+      const modalBox = e.target.closest('.modal-box');
+      if (modalBox) {
+        const saveBtn = modalBox.querySelector('.btn-primary');
+        if (saveBtn) { e.preventDefault(); saveBtn.click(); }
+        return;
+      }
+      if (e.target.id === 'set-school' || e.target.id === 'set-dev') { e.preventDefault(); saveSettings(); return; }
+    });
+    /* ---------- Enter key = Save, everywhere ---------- */
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      const tag = (e.target.tagName || '').toUpperCase();
+      if (tag === 'TEXTAREA' || tag === 'BUTTON' || e.target.isContentEditable) return;
+      const modalBox = e.target.closest('.modal-box');
+      if (modalBox) {
+        const btn = modalBox.querySelector('.btn-primary');
+        if (btn) { e.preventDefault(); btn.click(); }
+        return;
+      }
+      if (e.target.closest('#auth-screen')) { e.preventDefault(); authSubmit(); return; }
+      if (e.target.closest('#settings-form')) { e.preventDefault(); saveSettings(); return; }
     });
     function avatarHtml(s, size) {
       size = size || 36;
@@ -881,11 +942,34 @@
       </div>
     </div>
   </div>
-  <div class="card p-5 mt-5">
-    <h3 class="font-display font-bold mb-3">14-Day Pulse</h3>
-    <div class="flex gap-1.5 flex-wrap">${pulseStrip()}</div>
+  <div class="grid lg:grid-cols-2 gap-5 mt-5">
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-display font-bold">Student Performance</h3>
+        <button class="btn btn-outline btn-sm" onclick="App.nav('reports');App.reportsTabGo('leaderboard')">View Full Leaderboard</button>
+      </div>
+      ${dashboardPerformanceHtml()}
+    </div>
+    <div class="card p-5">
+      <h3 class="font-display font-bold mb-3">14-Day Pulse</h3>
+      <div class="flex gap-1.5 flex-wrap">${pulseStrip()}</div>
+    </div>
   </div>`;
       renderTrendChart();
+    }
+    function dashboardPerformanceHtml() {
+      const rows = DATA.students.map(s => ({ s, st: studentAttendanceStats(s.id) })).filter(r => r.st.total > 0).sort((a, b) => b.st.pct - a.st.pct);
+      if (!rows.length) return `<p class="text-sm" style="color:var(--text-muted)">No attendance data yet to rank students.</p>`;
+      const top = rows.slice(0, 5);
+      return `<div class="space-y-2">${top.map((r, i) => {
+        const cl = DATA.classes.find(c => c.id === r.s.classId);
+        return `<div class="flex items-center gap-2.5">
+          <span class="font-mono text-xs w-5" style="color:var(--text-faint)">#${i + 1}</span>
+          ${avatarHtml(r.s, 30)}
+          <div class="min-w-0 flex-1"><p class="text-sm font-semibold truncate">${esc(r.s.name)}</p><p class="text-xs" style="color:var(--text-muted)">${esc(cl?.name || '')} ${esc(cl?.section || '')}</p></div>
+          <span class="pill" style="background:var(--present-soft);color:var(--present)">${r.st.pct}%</span>
+        </div>`;
+      }).join('')}</div>`;
     }
     function statCard(label, val, icon, color) {
       return `<div class="stat-card">
@@ -1018,13 +1102,15 @@
     <div class="flex items-center gap-3 mb-4">
       <div id="photo-preview">${s && s.photo ? `<img src="${s.photo}" class="avatar" style="width:56px;height:56px">` : `<div class="avatar-fallback" style="width:56px;height:56px;background:${colorFor(s?.name || 'S')}">${initials(s?.name || '')}</div>`}</div>
       <div class="flex-1"><label>Photo</label><input type="file" accept="image/*" onchange="App.previewPhoto(this)"></div>
+      <button type="button" class="btn btn-danger btn-sm" id="photo-remove-btn" style="${s && s.photo ? '' : 'display:none'}" onclick="App.removePhoto()"><i data-lucide="trash-2" style="width:13px;height:13px"></i>Remove</button>
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div class="col-span-2"><label>Full Name</label><input id="f-name" value="${esc(s?.name || '')}" placeholder="Student name"></div>
       <div><label>Roll Number</label><input id="f-roll" type="number" value="${s?.roll || nextRoll()}"></div>
-      <div><label>Class</label><select id="f-class">${DATA.classes.map(c => `<option value="${c.id}" ${s && s.classId === c.id ? 'selected' : ''}>${esc(c.name)} ${esc(c.section)}</option>`).join('')}</select></div>
-      <div class="col-span-2"><label>Parent / Guardian Name</label><input id="f-parent" value="${esc(s?.parentName || '')}" placeholder="Parent name"></div>
-      <div class="col-span-2"><label>Parent Phone (WhatsApp, with country code)</label><input id="f-phone" value="${esc(s?.parentPhone || '91')}" placeholder="91XXXXXXXXXX"></div>
+      <div><label>Class</label><select id="f-class" onchange="App.toggleStreamFieldForClass(this.value)">${DATA.classes.map(c => `<option value="${c.id}" ${s && s.classId === c.id ? 'selected' : ''}>${esc(c.name)} ${esc(c.section)}</option>`).join('')}</select></div>
+      ${streamFieldHtml(s)}
+      <div class="col-span-2"><label>Parent / Guardian Name *</label><input id="f-parent" value="${esc(s?.parentName || '')}" placeholder="Parent name"></div>
+      <div class="col-span-2"><label>Parent Phone * (WhatsApp, with country code)</label><input id="f-phone" value="${esc(s?.parentPhone || '91')}" placeholder="91XXXXXXXXXX"></div>
     </div>
     <div class="flex gap-2 justify-end mt-5">
       <button class="btn btn-outline" onclick="App.closeModal()">Cancel</button>
@@ -1033,12 +1119,22 @@
   </div>`);
     }
     function nextRoll() { return DATA.students.length ? Math.max(...DATA.students.map(s => s.roll)) + 1 : 1; }
-    let _pendingPhoto = null;
+    let _pendingPhoto = null; // dataURL = new photo, 'REMOVE' = remove existing, null = no change
     function previewPhoto(input) {
       const file = input.files[0]; if (!file) return;
       const reader = new FileReader();
-      reader.onload = e => { _pendingPhoto = e.target.result; document.getElementById('photo-preview').innerHTML = `<img src="${_pendingPhoto}" class="avatar" style="width:56px;height:56px">`; };
+      reader.onload = e => {
+        _pendingPhoto = e.target.result;
+        document.getElementById('photo-preview').innerHTML = `<img src="${_pendingPhoto}" class="avatar" style="width:56px;height:56px">`;
+        const btn = document.getElementById('photo-remove-btn'); if (btn) btn.style.display = '';
+      };
       reader.readAsDataURL(file);
+    }
+    function removePhoto() {
+      _pendingPhoto = 'REMOVE';
+      const name = document.getElementById('f-name')?.value || 'S';
+      document.getElementById('photo-preview').innerHTML = `<div class="avatar-fallback" style="width:56px;height:56px;background:${colorFor(name)}">${initials(name)}</div>`;
+      const btn = document.getElementById('photo-remove-btn'); if (btn) btn.style.display = 'none';
     }
     function saveStudent(id) {
       const name = document.getElementById('f-name').value.trim();
@@ -1047,30 +1143,45 @@
       const parentName = document.getElementById('f-parent').value.trim();
       const parentPhone = document.getElementById('f-phone').value.trim().replace(/\D/g, '');
       if (!name) { toast('Please enter student name', { icon: 'alert-circle', color: 'var(--absent)' }); return; }
+      if (!parentName) { toast('Parent / Guardian name is required', { icon: 'alert-circle', color: 'var(--absent)' }); return; }
+      if (!parentPhone) { toast('Parent phone number is required', { icon: 'alert-circle', color: 'var(--absent)' }); return; }
+      const dupe = DATA.students.find(x => x.classId === classId && x.roll === roll && x.id !== id);
+      if (dupe) { toast(`Roll No. ${roll} is already assigned to ${dupe.name} in this class`, { icon: 'alert-circle', color: 'var(--absent)' }); return; }
+      const streamEl = document.getElementById('f-stream');
+      const stream = streamEl ? streamEl.value : '';
       if (id) {
         const s = DATA.students.find(x => x.id === id);
-        Object.assign(s, { name, roll, classId, parentName, parentPhone });
-        if (_pendingPhoto) s.photo = _pendingPhoto;
+        Object.assign(s, { name, roll, classId, parentName, parentPhone, stream: stream || null, streamSubjects: stream ? STREAM_SUBJECTS[stream] : null });
+        if (_pendingPhoto === 'REMOVE') s.photo = null;
+        else if (_pendingPhoto) s.photo = _pendingPhoto;
         addActivity(`Updated student ${name}`, 'pencil');
         toast('Student updated');
       } else {
         DATA.students.push({
           id: uid('stu'), name, roll, classId, parentName, parentPhone,
-          photo: _pendingPhoto || null, feeTotal: 12000, feePaid: 0, feeDue: todayStr(new Date(Date.now() + 15 * 86400000))
+          stream: stream || null, streamSubjects: stream ? STREAM_SUBJECTS[stream] : null,
+          photo: (_pendingPhoto && _pendingPhoto !== 'REMOVE') ? _pendingPhoto : null, feeTotal: 12000, feePaid: 0, feeDue: todayStr(new Date(Date.now() + 15 * 86400000))
         });
         addActivity(`Added new student ${name}`, 'user-plus');
         toast('Student added');
       }
-      _pendingPhoto = null; save(); closeModal(); renderStudents();
+      _pendingPhoto = null; save(); closeModal(); refreshStudentListViews();
+    }
+    function refreshStudentListViews() {
+      if (UI.page === 'students') { renderStudents(); }
+      else if (UI.page === 'reports') { paintReportTabs(); paintReports(); }
+      else if (UI.page === 'marks') { paintMarksTable(); }
+      else if (UI.page === 'fees') { renderFees(); }
+      else if (UI.page === 'dashboard') { renderDashboard(); }
     }
     function deleteStudent(id) {
       const idx = DATA.students.findIndex(x => x.id === id);
       if (idx === -1) return;
       const [removed] = DATA.students.splice(idx, 1);
-      save(); paintStudentsTable();
+      save(); refreshStudentListViews();
       toast(`${removed.name} deleted`, {
         icon: 'trash-2', color: 'var(--absent)', actionLabel: 'Undo', duration: 5000, onAction: () => {
-          DATA.students.splice(idx, 0, removed); save(); paintStudentsTable(); toast('Deletion undone');
+          DATA.students.splice(idx, 0, removed); save(); refreshStudentListViews(); toast('Deletion undone');
         }
       });
     }
@@ -1250,10 +1361,22 @@
       const hol = isHoliday(date);
       const students = DATA.students.filter(s => s.classId === UI.attendance.classId).sort((a, b) => a.roll - b.roll);
       const session = UI.attendance.session;
+      const isToday = date === todayStr();
+      const editable = isToday && !hol;
+
+      // Attendance defaults to Present — auto-fill today's slot the first time it's opened
+      if (editable) {
+        const slot = DATA.attendance[date]?.[UI.attendance.classId]?.[session];
+        if (!slot || Object.keys(slot).length === 0) {
+          const rec0 = ensureAttSlot(date, UI.attendance.classId, session);
+          students.forEach(s => { if (!rec0[s.id]) rec0[s.id] = 'present'; });
+          save();
+        }
+      }
       const rec = (DATA.attendance[date]?.[UI.attendance.classId]?.[session]) || {};
 
       let counts = { present: 0, absent: 0, leave: 0, half: 0, late: 0 };
-      students.forEach(s => { const st = rec[s.id]; if (st) counts[st]++; });
+      students.forEach(s => { const st = rec[s.id] || (editable ? 'present' : null); if (st) counts[st]++; });
 
       return `
   <div class="flex flex-wrap items-end gap-3 mb-4">
@@ -1264,26 +1387,29 @@
       <div class="tab-btn ${session === 'morning' ? 'active' : ''}" onclick="App.setAttSession('morning')">Morning</div>
       <div class="tab-btn ${session === 'evening' ? 'active' : ''}" onclick="App.setAttSession('evening')">Evening</div>
     </div></div>`: ''}
+    ${editable ? `
     <div class="ml-auto flex flex-wrap gap-2">
-      <button class="btn btn-outline btn-sm" ${hol ? 'disabled style="opacity:.4"' : ''} onclick="App.copyYesterday()"><i data-lucide="copy" style="width:13px;height:13px"></i>Copy Yesterday</button>
-      <button class="btn btn-outline btn-sm" ${hol ? 'disabled style="opacity:.4"' : ''} onclick="App.bulkMark('present')"><i data-lucide="check-check" style="width:13px;height:13px"></i>Mark All Present</button>
-      <button class="btn btn-outline btn-sm" ${hol ? 'disabled style="opacity:.4"' : ''} onclick="App.bulkMark('absent')"><i data-lucide="x" style="width:13px;height:13px"></i>Mark All Absent</button>
-    </div>
+      <button class="btn btn-outline btn-sm" onclick="App.bulkMark('present')"><i data-lucide="check-check" style="width:13px;height:13px"></i>Mark All Present</button>
+      <button class="btn btn-outline btn-sm" onclick="App.bulkMark('absent')"><i data-lucide="x" style="width:13px;height:13px"></i>Mark All Absent</button>
+    </div>` : ''}
   </div>
   ${hol ? `<div class="card p-4 flex items-center gap-2 mb-4" style="background:var(--leave-soft);border-color:var(--leave)"><i data-lucide="party-popper" style="width:18px;height:18px;color:var(--leave)"></i><span class="font-semibold">This date is marked as a holiday — ${esc(hol.reason)}. Attendance cannot be recorded.</span></div>`
           : `
+  ${!isToday ? `<div class="card p-3 mb-4 flex items-center gap-2" style="background:var(--surface-2)"><i data-lucide="lock" style="width:15px;height:15px;color:var(--text-muted)"></i><span class="text-sm font-semibold" style="color:var(--text-muted)">Past attendance is read-only — only today's attendance can be edited.</span></div>` : ''}
   <div class="flex gap-2 mb-4 flex-wrap">
     ${chip('Present', counts.present, 'present')}${chip('Absent', counts.absent, 'absent')}${chip('Leave', counts.leave, 'leave')}${chip('Half Day', counts.half, 'half')}${chip('Late', counts.late, 'late')}
-    <span class="pill ml-auto" style="background:var(--surface-2)">${students.length - Object.keys(rec).filter(k => rec[k]).length} unmarked</span>
   </div>
   <div class="card divide-y" style="border-color:var(--border)">
-    ${students.map(s => `
+    ${students.map(s => {
+        const st = rec[s.id] || (editable ? 'present' : null);
+        return `
       <div class="flex flex-col sm:flex-row sm:items-center gap-2 p-3" style="border-bottom:1px solid var(--border)">
         <div class="flex items-center gap-2.5 sm:w-52 flex-shrink-0">${avatarHtml(s, 32)}<div><p class="text-sm font-semibold">${esc(s.name)}</p><p class="text-xs font-mono" style="color:var(--text-muted)">Roll ${s.roll}</p></div></div>
         <div class="flex gap-1.5 flex-1">
-          ${Object.entries(STATUS_META).map(([key, m]) => `<div class="att-pill ${rec[s.id] === key ? 'sel-' + m.color : ''}" onclick="App.markStudent('${s.id}','${key}')">${m.abbr}</div>`).join('')}
+          ${Object.entries(STATUS_META).map(([key, m]) => `<div class="att-pill ${st === key ? 'sel-' + m.color : ''}" style="${editable ? '' : 'cursor:not-allowed;opacity:.7'}" ${editable ? `onclick="App.markStudent('${s.id}','${key}')"` : ''}>${m.abbr}</div>`).join('')}
         </div>
-      </div>`).join('') || `<p class="p-6 text-center" style="color:var(--text-muted)">No students in this class</p>`}
+      </div>`;
+      }).join('') || `<p class="p-6 text-center" style="color:var(--text-muted)">No students in this class</p>`}
   </div>`}`;
     }
     function chip(label, count, color) { return `<span class="pill" style="background:var(--${color}-soft);color:var(--${color})">${label}: ${count}</span>`; }
@@ -1299,31 +1425,20 @@
     function markStudent(studentId, status) {
       const { date, classId, session } = UI.attendance;
       if (isHoliday(date)) return;
+      if (date !== todayStr()) { toast('Past attendance cannot be edited', { icon: 'lock', color: 'var(--absent)' }); return; }
       const rec = ensureAttSlot(date, classId, session);
-      rec[studentId] = rec[studentId] === status ? undefined : status;
-      if (rec[studentId] === undefined) delete rec[studentId];
+      rec[studentId] = status;
       save(); paintAttBody();
     }
     function bulkMark(status) {
       const { date, classId, session } = UI.attendance;
       if (isHoliday(date)) return;
+      if (date !== todayStr()) { toast('Past attendance cannot be edited', { icon: 'lock', color: 'var(--absent)' }); return; }
       const rec = ensureAttSlot(date, classId, session);
       DATA.students.filter(s => s.classId === classId).forEach(s => rec[s.id] = status);
       save(); paintAttBody();
       toast(`Marked all students ${status}`);
       addActivity(`Bulk marked ${DATA.classes.find(c => c.id === classId)?.name} as ${status} (${session})`, 'check-check');
-    }
-    function copyYesterday() {
-      const { date, classId, session } = UI.attendance;
-      if (isHoliday(date)) return;
-      const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() - 1);
-      const yest = todayStr(d);
-      const src = DATA.attendance[yest]?.[classId]?.[session];
-      if (!src) { toast('No attendance found for yesterday', { icon: 'alert-circle', color: 'var(--absent)' }); return; }
-      const rec = ensureAttSlot(date, classId, session);
-      Object.assign(rec, src);
-      save(); paintAttBody();
-      toast("Copied yesterday's attendance");
     }
 
     function attendanceCalendarHtml() {
@@ -1355,6 +1470,12 @@
       <button class="btn btn-ghost btn-sm p-2" onclick="App.calMove(-1)"><i data-lucide="chevron-left" style="width:16px;height:16px"></i></button>
       <h3 class="font-display font-bold">${monthName}</h3>
       <button class="btn btn-ghost btn-sm p-2" onclick="App.calMove(1)"><i data-lucide="chevron-right" style="width:16px;height:16px"></i></button>
+      <select class="!w-auto !py-1 ml-2" onchange="App.jumpToMonth(this.value)">
+        ${Array.from({ length: 12 }, (_, m) => `<option value="${m}" ${m === UI.calMonth ? 'selected' : ''}>${new Date(2000, m, 1).toLocaleDateString('en-IN', { month: 'long' })}</option>`).join('')}
+      </select>
+      <select class="!w-auto !py-1" onchange="App.jumpToYear(this.value)">
+        ${Array.from({ length: 9 }, (_, i) => UI.calYear - 4 + i).map(y => `<option value="${y}" ${y === UI.calYear ? 'selected' : ''}>${y}</option>`).join('')}
+      </select>
       <div class="ml-auto flex gap-3 text-xs" style="color:var(--text-muted)">
         <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--present)"></span>Good</span>
         <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--half)"></span>Average</span>
@@ -1371,6 +1492,8 @@
       if (UI.calMonth < 0) { UI.calMonth = 11; UI.calYear--; } if (UI.calMonth > 11) { UI.calMonth = 0; UI.calYear++; }
       paintAttBody();
     }
+    function jumpToMonth(m) { UI.calMonth = parseInt(m); paintAttBody(); }
+    function jumpToYear(y) { UI.calYear = parseInt(y); paintAttBody(); }
     function jumpToMark(ds) { if (ds > todayStr()) return; UI.attendance.date = ds; UI.attTab = 'mark'; renderAttendance(); }
 
     function attendanceHistoryHtml() {
@@ -1482,9 +1605,14 @@
     }
     function renderMarks() {
       UI.marksFilterClass = UI.marksFilterClass || 'all';
+      UI.marksSearch = UI.marksSearch || '';
       const el = document.getElementById('page-content');
       el.innerHTML = `
   <div class="flex flex-wrap items-center gap-2 mb-4">
+    <div class="relative flex-1 min-w-[180px]">
+      <i data-lucide="search" style="width:15px;height:15px" class="absolute left-3 top-1/2 -translate-y-1/2" style="color:var(--text-faint)"></i>
+      <input class="pl-8" placeholder="Search by name or roll no." value="${esc(UI.marksSearch)}" oninput="App.setMarksSearch(this.value)">
+    </div>
     <select class="!w-auto" onchange="App.setMarksFilter(this.value)">
       <option value="all">All Classes</option>
       ${DATA.classes.map(c => `<option value="${c.id}" ${UI.marksFilterClass === c.id ? 'selected' : ''}>${esc(c.name)} ${esc(c.section)}</option>`).join('')}
@@ -1492,26 +1620,101 @@
     <button class="btn btn-outline" onclick="App.openSubjectForm()"><i data-lucide="book-plus" style="width:15px;height:15px"></i>Add Subject</button>
     <button class="btn btn-primary ml-auto" onclick="App.openMarksForm()"><i data-lucide="plus" style="width:15px;height:15px"></i>Add Marks</button>
   </div>
+  <div id="marks-table-wrap"></div>`;
+      paintMarksTable();
+    }
+    function setMarksFilter(v) { UI.marksFilterClass = v; paintMarksTable(); }
+    function setMarksSearch(v) { UI.marksSearch = v; paintMarksTable(); }
+    function paintMarksTable() {
+      const q = (UI.marksSearch || '').trim().toLowerCase();
+      let rows = DATA.students.filter(s => UI.marksFilterClass === 'all' || s.classId === UI.marksFilterClass);
+      if (q) rows = rows.filter(s => s.name.toLowerCase().includes(q) || String(s.roll).includes(q));
+      const withStats = rows.map(s => {
+        const stuMarks = DATA.marks.filter(m => m.studentId === s.id);
+        let totalScore = 0, totalMax = 0, lastUpdated = null, anyEdited = false;
+        stuMarks.forEach(m => {
+          totalScore += m.score; totalMax += m.maxScore;
+          if (m.edited) anyEdited = true;
+          if (m.updatedAt && (!lastUpdated || m.updatedAt > lastUpdated)) lastUpdated = m.updatedAt;
+        });
+        const pct = totalMax ? Math.round(totalScore / totalMax * 100) : 0;
+        return { s, totalMax, pct, lastUpdated, anyEdited };
+      });
+      withStats.sort((a, b) => {
+        if (a.anyEdited !== b.anyEdited) return a.anyEdited ? -1 : 1;
+        if (a.anyEdited && b.anyEdited) return (b.lastUpdated || '').localeCompare(a.lastUpdated || '');
+        return a.s.roll - b.s.roll;
+      });
+      document.getElementById('marks-table-wrap').innerHTML = `
   <div class="card overflow-x-auto">
     <table>
-      <thead><tr><th>Student</th>${DATA.subjects.map(s => `<th>${esc(s.name)}</th>`).join('')}<th>Total %</th><th>Grade</th></tr></thead>
-      <tbody>${DATA.students.filter(s => UI.marksFilterClass === 'all' || s.classId === UI.marksFilterClass).sort((a, b) => a.roll - b.roll).map(s => {
-        const stuMarks = DATA.marks.filter(m => m.studentId === s.id);
-        let totalScore = 0, totalMax = 0;
-        const subjCells = DATA.subjects.map(sub => {
-          const m = stuMarks.filter(x => x.subjectId === sub.id);
-          const sc = m.reduce((a, x) => a + x.score, 0), mx = m.reduce((a, x) => a + x.maxScore, 0);
-          totalScore += sc; totalMax += mx;
-          return `<td>${mx ? `${sc}/${mx}` : '—'}</td>`;
-        }).join('');
-        const pct = totalMax ? Math.round(totalScore / totalMax * 100) : 0;
-        return `<tr><td><div class="flex items-center gap-2">${avatarHtml(s, 28)}<span class="font-semibold">${esc(s.name)}</span></div></td>${subjCells}
-        <td class="font-mono font-bold">${totalMax ? pct + '%' : '—'}</td><td>${totalMax ? `<span class="pill" style="background:var(--primary-soft);color:var(--primary)">${gradeFor(pct)}</span>` : '—'}</td></tr>`;
-      }).join('') || `<tr><td colspan="${DATA.subjects.length + 3}" class="text-center py-8" style="color:var(--text-muted)">No students</td></tr>`}</tbody>
+      <thead><tr><th>Roll</th><th>Student</th><th>Class</th><th>Total %</th><th>Grade</th><th>Status</th><th></th></tr></thead>
+      <tbody>${withStats.map(({ s, totalMax, pct, lastUpdated, anyEdited }) => {
+        const cl = DATA.classes.find(c => c.id === s.classId);
+        return `<tr>
+        <td class="font-mono">${s.roll}</td>
+        <td><div class="flex items-center gap-2">${avatarHtml(s, 28)}<span class="font-semibold">${esc(s.name)}</span></div></td>
+        <td>${esc(cl?.name || '—')} ${esc(cl?.section || '')}</td>
+        <td class="font-mono font-bold">${totalMax ? pct + '%' : '—'}</td>
+        <td>${totalMax ? `<span class="pill" style="background:var(--primary-soft);color:var(--primary)">${gradeFor(pct)}</span>` : '—'}</td>
+        <td>${anyEdited ? `<span class="pill" style="background:var(--leave-soft);color:var(--leave)" title="${new Date(lastUpdated).toLocaleString('en-IN')}"><i data-lucide="pencil" style="width:11px;height:11px"></i>Updated</span>` : (totalMax ? `<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">Recorded</span>` : `<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">No data</span>`)}</td>
+        <td><div class="flex items-center gap-1 justify-end">
+          <button class="btn btn-ghost btn-sm p-1.5" onclick="App.openStudentMarksManager('${s.id}')" title="Edit marks"><i data-lucide="pencil" style="width:14px;height:14px"></i></button>
+          <button class="btn btn-ghost btn-sm p-1.5" onclick="App.deleteStudentMarks('${s.id}')" title="Delete all marks"><i data-lucide="trash-2" style="width:14px;height:14px;color:var(--absent)"></i></button>
+        </div></td>
+      </tr>`;
+      }).join('') || `<tr><td colspan="7" class="text-center py-8" style="color:var(--text-muted)">No students found</td></tr>`}</tbody>
     </table>
   </div>`;
+      icons();
     }
-    function setMarksFilter(v) { UI.marksFilterClass = v; renderMarks(); }
+    function openStudentMarksManager(studentId) {
+      const s = DATA.students.find(x => x.id === studentId); if (!s) return;
+      const cl = DATA.classes.find(c => c.id === s.classId);
+      const stuMarks = DATA.marks.filter(m => m.studentId === studentId).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      openModal(`<div class="p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div><h3 class="font-display font-bold text-lg">${esc(s.name)}'s Marks</h3><p class="text-xs" style="color:var(--text-muted)">Roll ${s.roll} · ${esc(cl?.name || '')} ${esc(cl?.section || '')}</p></div>
+      <button class="btn btn-primary btn-sm" onclick="App.openMarksForm({studentId:'${studentId}'})"><i data-lucide="plus" style="width:13px;height:13px"></i>Add</button>
+    </div>
+    <div class="card overflow-x-auto">
+      <table>
+        <thead><tr><th>Subject</th><th>Exam</th><th>Score</th><th></th><th></th></tr></thead>
+        <tbody>${stuMarks.map(m => {
+        const sub = DATA.subjects.find(x => x.id === m.subjectId);
+        return `<tr>
+            <td>${esc(sub?.name || '—')}</td>
+            <td>${esc(m.examType)}${m.edited ? ` <span class="pill" style="background:var(--leave-soft);color:var(--leave)">Updated</span>` : ''}</td>
+            <td class="font-mono">${m.score}/${m.maxScore}</td>
+            <td><button class="btn btn-ghost btn-sm p-1.5" onclick="App.closeModal();App.openMarksForm({studentId:'${studentId}', subjectId:'${m.subjectId}', examType:'${esc(m.examType)}', score:${m.score}, maxScore:${m.maxScore}, markId:'${m.id}'})"><i data-lucide="pencil" style="width:14px;height:14px"></i></button></td>
+            <td><button class="btn btn-ghost btn-sm p-1.5" onclick="App.deleteMarkEntry('${m.id}','${studentId}')"><i data-lucide="trash-2" style="width:14px;height:14px;color:var(--absent)"></i></button></td>
+          </tr>`;
+      }).join('') || `<tr><td colspan="5" class="text-center py-6" style="color:var(--text-muted)">No marks recorded yet</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="flex justify-end mt-5"><button class="btn btn-outline" onclick="App.closeModal()">Close</button></div>
+  </div>`);
+    }
+    function deleteMarkEntry(markId, studentId) {
+      DATA.marks = DATA.marks.filter(m => m.id !== markId);
+      save(); toast('Marks entry deleted', { icon: 'trash-2', color: 'var(--absent)' });
+      closeModal(); openStudentMarksManager(studentId); paintMarksTable();
+    }
+    function deleteStudentMarks(studentId) {
+      const s = DATA.students.find(x => x.id === studentId);
+      openModal(`<div class="p-6">
+    <h3 class="font-display font-bold text-lg mb-2">Delete all marks for ${esc(s?.name || 'student')}?</h3>
+    <p class="text-sm mb-5" style="color:var(--text-muted)">This will remove every recorded mark for this student. This cannot be undone.</p>
+    <div class="flex gap-2 justify-end">
+      <button class="btn btn-outline" onclick="App.closeModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="App.confirmDeleteStudentMarks('${studentId}')"><i data-lucide="trash-2" style="width:15px;height:15px"></i>Yes, Delete</button>
+    </div>
+  </div>`);
+    }
+    function confirmDeleteStudentMarks(studentId) {
+      DATA.marks = DATA.marks.filter(m => m.studentId !== studentId);
+      save(); closeModal(); paintMarksTable(); toast('All marks deleted for student', { icon: 'trash-2', color: 'var(--absent)' });
+    }
     function openSubjectForm() {
       openModal(`<div class="p-6"><h3 class="font-display font-bold text-lg mb-4">Add Subject</h3>
   <div><label>Subject Name</label><input id="sub-name" placeholder="e.g. Computer Science"></div>
@@ -1523,34 +1726,69 @@
       if (!name) return;
       DATA.subjects.push({ id: uid('sub'), name }); save(); closeModal(); renderMarks(); toast('Subject added');
     }
-    function openMarksForm() {
+    function marksStudentOptionsHtml(filter, selectedId) {
+      const q = (filter || '').trim().toLowerCase();
+      const list = DATA.students.filter(s => !q || s.name.toLowerCase().includes(q) || String(s.roll).includes(q)).sort((a, b) => a.roll - b.roll);
+      return list.map(s => {
+        const cl = DATA.classes.find(c => c.id === s.classId);
+        return `<option value="${s.id}" ${selectedId === s.id ? 'selected' : ''}>${esc(s.name)} (Roll ${s.roll}, ${esc(cl?.name || '')} ${esc(cl?.section || '')})</option>`;
+      }).join('') || `<option value="" disabled selected>No matching students</option>`;
+    }
+    function filterMarksStudentSelect(q) {
+      const sel = document.getElementById('mf-student'); if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = marksStudentOptionsHtml(q, current);
+    }
+    function openMarksForm(prefill) {
+      prefill = prefill || {};
       openModal(`<div class="p-6">
-    <h3 class="font-display font-bold text-lg mb-4">Add Marks</h3>
+    <h3 class="font-display font-bold text-lg mb-4">${prefill.markId ? 'Edit Marks' : 'Add Marks'}</h3>
     <div class="space-y-3">
-      <div><label>Student</label><select id="mf-student">${DATA.students.sort((a, b) => a.roll - b.roll).map(s => `<option value="${s.id}">${esc(s.name)} (Roll ${s.roll})</option>`).join('')}</select></div>
-      <div><label>Subject</label><select id="mf-subject">${DATA.subjects.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-      <div><label>Exam Type</label><select id="mf-exam"><option>Unit Test</option><option>Midterm</option><option>Final</option></select></div>
+      <div>
+        <label>Search Student</label>
+        <div class="relative">
+          <i data-lucide="search" style="width:14px;height:14px" class="absolute left-3 top-1/2 -translate-y-1/2" style="color:var(--text-faint)"></i>
+          <input class="pl-8" id="mf-student-search" placeholder="Search by name or roll no." oninput="App.filterMarksStudentSelect(this.value)">
+        </div>
+      </div>
+      <div><label>Student</label><select id="mf-student" ${prefill.studentId ? 'disabled' : ''}>${marksStudentOptionsHtml('', prefill.studentId)}</select></div>
+      <div>
+        <label>Subject</label>
+        <input id="mf-subject-name" list="subject-suggestions" placeholder="Type subject name, e.g. Mathematics" value="${esc(prefill.subjectId ? (DATA.subjects.find(x => x.id === prefill.subjectId)?.name || '') : (prefill.subjectName || ''))}">
+        <datalist id="subject-suggestions">${DATA.subjects.map(s => `<option value="${esc(s.name)}">`).join('')}</datalist>
+      </div>
+      <div><label>Exam Type</label><select id="mf-exam">${EXAM_TYPES.map(t => `<option ${prefill.examType === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label>Score Obtained</label><input id="mf-score" type="number" value="0"></div>
-        <div><label>Max Score</label><input id="mf-max" type="number" value="100"></div>
+        <div><label>Score Obtained</label><input id="mf-score" type="number" value="${prefill.score ?? 0}"></div>
+        <div><label>Max Score</label><input id="mf-max" type="number" value="${prefill.maxScore ?? 100}"></div>
       </div>
     </div>
     <div class="flex gap-2 justify-end mt-5">
       <button class="btn btn-outline" onclick="App.closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="App.saveMarks()"><i data-lucide="save" style="width:15px;height:15px"></i>Save</button>
+      <button class="btn btn-primary" onclick="App.saveMarks(${prefill.studentId ? `'${prefill.studentId}'` : 'null'})"><i data-lucide="save" style="width:15px;height:15px"></i>Save</button>
     </div>
   </div>`);
     }
-    function saveMarks() {
-      const studentId = document.getElementById('mf-student').value;
-      const subjectId = document.getElementById('mf-subject').value;
+    function saveMarks(lockedStudentId) {
+      const studentId = lockedStudentId || document.getElementById('mf-student').value;
+      if (!studentId) { toast('Please select a student', { icon: 'alert-circle', color: 'var(--absent)' }); return; }
+      const subjectName = document.getElementById('mf-subject-name').value.trim();
+      if (!subjectName) { toast('Please enter a subject name', { icon: 'alert-circle', color: 'var(--absent)' }); return; }
+      let subj = DATA.subjects.find(x => x.name.toLowerCase() === subjectName.toLowerCase());
+      if (!subj) { subj = { id: uid('sub'), name: subjectName }; DATA.subjects.push(subj); }
+      const subjectId = subj.id;
       const examType = document.getElementById('mf-exam').value;
       const score = parseFloat(document.getElementById('mf-score').value) || 0;
       const maxScore = parseFloat(document.getElementById('mf-max').value) || 100;
       const existing = DATA.marks.find(m => m.studentId === studentId && m.subjectId === subjectId && m.examType === examType);
-      if (existing) { existing.score = score; existing.maxScore = maxScore; }
-      else DATA.marks.push({ id: uid('mk'), studentId, subjectId, examType, score, maxScore });
-      save(); closeModal(); renderMarks(); toast('Marks saved');
+      const now = new Date().toISOString();
+      const wasUpdate = !!existing;
+      if (existing) { existing.score = score; existing.maxScore = maxScore; existing.updatedAt = now; existing.edited = true; }
+      else DATA.marks.push({ id: uid('mk'), studentId, subjectId, examType, score, maxScore, updatedAt: now, edited: false });
+      save(); closeModal(); renderMarks();
+      const stu = DATA.students.find(s => s.id === studentId);
+      toast(wasUpdate ? `Marks updated for ${stu?.name || 'student'}` : 'Marks saved');
+      addActivity(`${wasUpdate ? 'Updated' : 'Added'} marks for ${stu?.name || 'student'}`, 'graduation-cap');
     }
 
     /* =========================================================================
@@ -1610,24 +1848,84 @@
     /* =========================================================================
        REPORTS
        ========================================================================= */
+    const REPORT_TABS = { class: 'Class-wise', student: 'Student-wise', leaderboard: 'Leaderboard', loc: 'LOC Roster', all: 'All Students' };
     function renderReports() {
       UI.reportsTab = UI.reportsTab || 'class';
       const el = document.getElementById('page-content');
       el.innerHTML = `
-  <div class="flex gap-2 mb-4 flex-wrap" style="border-bottom:1px solid var(--border)">
-    ${['class', 'student', 'leaderboard', 'loc'].map(t => `<div class="tab-btn ${UI.reportsTab === t ? 'active' : ''}" onclick="App.reportsTabGo('${t}')">${{ class: 'Class-wise', student: 'Student-wise', leaderboard: 'Leaderboard', loc: 'LOC Roster' }[t]}</div>`).join('')}
-  </div>
+  <div class="flex gap-2 mb-4 flex-wrap" style="border-bottom:1px solid var(--border)" id="reports-tabs"></div>
   <div id="reports-body"></div>`;
+      paintReportTabs();
       paintReports();
     }
-    function reportsTabGo(t) { UI.reportsTab = t; paintReports(); }
+    function paintReportTabs() {
+      document.getElementById('reports-tabs').innerHTML = Object.keys(REPORT_TABS).map(t =>
+        `<div class="tab-btn ${UI.reportsTab === t ? 'active' : ''}" onclick="App.reportsTabGo('${t}')">${REPORT_TABS[t]}</div>`
+      ).join('');
+      icons();
+    }
+    function reportsTabGo(t) { UI.reportsTab = t; paintReportTabs(); paintReports(); }
     function paintReports() {
       const body = document.getElementById('reports-body');
       if (UI.reportsTab === 'class') body.innerHTML = classReportHtml();
       else if (UI.reportsTab === 'student') body.innerHTML = studentReportHtml();
       else if (UI.reportsTab === 'leaderboard') body.innerHTML = leaderboardHtml();
+      else if (UI.reportsTab === 'all') body.innerHTML = allStudentsReportHtml();
       else body.innerHTML = locHtml();
       icons();
+    }
+    function allStudentsReportHtml() {
+      const rows = DATA.students.slice().sort((a, b) => a.roll - b.roll);
+      return `
+  <div class="flex justify-end mb-3 gap-2">
+    <button class="btn btn-outline btn-sm" onclick="App.exportAllStudentsPDF()"><i data-lucide="file-text" style="width:13px;height:13px"></i>PDF</button>
+    <button class="btn btn-outline btn-sm" onclick="App.exportAllStudentsExcel()"><i data-lucide="sheet" style="width:13px;height:13px"></i>Excel</button>
+  </div>
+  <div class="card overflow-x-auto">
+    <table>
+      <thead><tr><th>Roll</th><th>Student</th><th>Class</th><th>Parent</th><th>Attendance %</th><th>Marks %</th><th>Fee</th><th></th></tr></thead>
+      <tbody>${rows.map(s => {
+        const cl = DATA.classes.find(c => c.id === s.classId);
+        const att = studentAttendanceStats(s.id);
+        const stuMarks = DATA.marks.filter(m => m.studentId === s.id);
+        const ts = stuMarks.reduce((a, m) => a + m.score, 0), tm = stuMarks.reduce((a, m) => a + m.maxScore, 0);
+        const marksPct = tm ? Math.round(ts / tm * 100) : 0;
+        return `<tr>
+          <td class="font-mono">${s.roll}</td>
+          <td><div class="flex items-center gap-2">${avatarHtml(s, 26)}<span class="font-semibold">${esc(s.name)}</span></div></td>
+          <td>${esc(cl?.name || '—')} ${esc(cl?.section || '')}</td>
+          <td class="text-xs">${esc(s.parentName)}<br><span style="color:var(--text-muted)">+${s.parentPhone}</span></td>
+          <td class="font-mono">${att.pct}%</td>
+          <td class="font-mono">${tm ? marksPct + '%' : '—'}</td>
+          <td>${feeBadge(feeStatusFor(s))}</td>
+          <td><div class="flex items-center gap-1 justify-end">
+            <button class="btn btn-ghost btn-sm p-1.5" onclick="App.openStudentForm('${s.id}')"><i data-lucide="pencil" style="width:14px;height:14px"></i></button>
+            <button class="btn btn-ghost btn-sm p-1.5" onclick="App.deleteStudent('${s.id}')"><i data-lucide="trash-2" style="width:14px;height:14px;color:var(--absent)"></i></button>
+          </div></td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="8" class="text-center py-8" style="color:var(--text-muted)">No students</td></tr>`}</tbody>
+    </table>
+  </div>`;
+    }
+    function exportAllStudentsPDF() {
+      const rows = DATA.students.slice().sort((a, b) => a.roll - b.roll);
+      const doc = new window.jspdf.jsPDF();
+      let y = pdfHeader(doc, 'All Students Report');
+      const body = rows.map(s => {
+        const cl = DATA.classes.find(c => c.id === s.classId);
+        const att = studentAttendanceStats(s.id);
+        return [s.roll, s.name, `${cl?.name || ''} ${cl?.section || ''}`, s.parentName, att.pct + '%'];
+      });
+      pdfTable(doc, y, ['Roll', 'Name', 'Class', 'Parent', 'Att %'], body, [35, 150, 100, 150, 60]);
+      downloadPdf(doc, 'all_students_report.pdf');
+    }
+    function exportAllStudentsExcel() {
+      const rows = DATA.students.slice().sort((a, b) => a.roll - b.roll).map(s => {
+        const cl = DATA.classes.find(c => c.id === s.classId);
+        const att = studentAttendanceStats(s.id);
+        return { Roll: s.roll, Name: s.name, Class: `${cl?.name || ''} ${cl?.section || ''}`, Parent: s.parentName, Phone: s.parentPhone, 'Attendance %': att.pct, Fee: feeStatusFor(s) };
+      });
+      downloadExcel(rows, 'all_students_report.xlsx', 'All Students');
     }
     function classReportHtml() {
       UI.repClass = UI.repClass || DATA.classes[0]?.id;
@@ -1842,11 +2140,12 @@
       const el = document.getElementById('page-content');
       el.innerHTML = `
   <div class="grid lg:grid-cols-2 gap-5">
-    <div class="card p-5">
+    <div class="card p-5" id="settings-form">
       <h3 class="font-display font-bold mb-4">School Profile</h3>
       <div class="flex items-center gap-3 mb-4">
         <div id="logo-preview">${DATA.meta.logo ? `<img src="${DATA.meta.logo}" class="avatar" style="width:52px;height:52px">` : `<div class="avatar-fallback" style="width:52px;height:52px;background:var(--primary)"><i data-lucide="school" style="width:22px;height:22px"></i></div>`}</div>
         <div class="flex-1"><label>School Logo</label><input type="file" accept="image/*" onchange="App.previewLogo(this)"></div>
+        <button type="button" class="btn btn-danger btn-sm" id="logo-remove-btn" style="${DATA.meta.logo ? '' : 'display:none'}" onclick="App.removeLogo()"><i data-lucide="trash-2" style="width:13px;height:13px"></i>Remove</button>
       </div>
       <label>School Name</label><input id="set-school" value="${esc(DATA.meta.schoolName)}">
       <div class="mt-4"><label>Developer Credit</label><input id="set-dev" value="${esc(DATA.meta.developerName)}" placeholder="Your Name"></div>
@@ -1867,17 +2166,29 @@
     </div>
   </div>`;
     }
-    let _pendingLogo = null;
+    let _pendingLogo = null; // dataURL = new logo, 'REMOVE' = remove existing, null = no change
     function previewLogo(input) {
       const file = input.files[0]; if (!file) return;
       const reader = new FileReader();
-      reader.onload = e => { _pendingLogo = e.target.result; document.getElementById('logo-preview').innerHTML = `<img src="${_pendingLogo}" class="avatar" style="width:52px;height:52px">`; };
+      reader.onload = e => {
+        _pendingLogo = e.target.result;
+        document.getElementById('logo-preview').innerHTML = `<img src="${_pendingLogo}" class="avatar" style="width:52px;height:52px">`;
+        const btn = document.getElementById('logo-remove-btn'); if (btn) btn.style.display = '';
+      };
       reader.readAsDataURL(file);
+    }
+    function removeLogo() {
+      _pendingLogo = 'REMOVE';
+      document.getElementById('logo-preview').innerHTML = `<div class="avatar-fallback" style="width:52px;height:52px;background:var(--primary)"><i data-lucide="school" style="width:22px;height:22px"></i></div>`;
+      const btn = document.getElementById('logo-remove-btn'); if (btn) btn.style.display = 'none';
+      icons();
     }
     function saveSettings() {
       DATA.meta.schoolName = document.getElementById('set-school').value.trim() || DATA.meta.schoolName;
       DATA.meta.developerName = document.getElementById('set-dev').value.trim() || DATA.meta.developerName;
-      if (_pendingLogo) DATA.meta.logo = _pendingLogo;
+      if (_pendingLogo === 'REMOVE') DATA.meta.logo = null;
+      else if (_pendingLogo) DATA.meta.logo = _pendingLogo;
+      _pendingLogo = null;
       save(); toast('Settings saved'); buildNav();
     }
     function exportBackup() {
@@ -1906,15 +2217,18 @@
     window.App = {
       toggleAuthMode, authSubmit, demoLogin, logout,
       nav, openSidebar, closeSidebar, toggleTheme, closeModal, globalSearch,
-      setStudentsSearch, setStudentsFilter, studentsPageGo, openStudentForm, previewPhoto, saveStudent, deleteStudent, viewStudent,
+      setStudentsSearch, setStudentsFilter, studentsPageGo, openStudentForm, previewPhoto, removePhoto, saveStudent, deleteStudent, viewStudent,
+      renderStreamSubjects, toggleStreamFieldForClass,
       openClassForm, saveClass, deleteClass, openHolidayForm, saveHoliday, deleteHoliday,
-      attTabGo, setAttClass, setAttDate, setAttSession, markStudent, bulkMark, copyYesterday, calMove, jumpToMark, setHistFilter,
+      attTabGo, setAttClass, setAttDate, setAttSession, markStudent, bulkMark, calMove, jumpToMonth, jumpToYear, jumpToMark, setHistFilter,
       openLeaveForm, saveLeave, setLeaveStatus, deleteLeave,
-      setMarksFilter, openSubjectForm, saveSubject, openMarksForm, saveMarks,
+      setMarksFilter, setMarksSearch, filterMarksStudentSelect, openSubjectForm, saveSubject, openMarksForm, saveMarks,
+      openStudentMarksManager, deleteMarkEntry, deleteStudentMarks, confirmDeleteStudentMarks,
       openFeeForm, saveFee,
       reportsTabGo, setRepClass, setRepRange, setRepStudent, setLocClass,
       exportClassReportPDF, exportClassReportExcel, exportLeaderboardPDF, exportLeaderboardExcel, exportLocPDF, exportLocExcel, exportStudentPDF, exportStudentExcel, shareStudentWhatsApp,
-      previewLogo, saveSettings, exportBackup, clearData, confirmClearData,
+      exportAllStudentsPDF, exportAllStudentsExcel,
+      previewLogo, removeLogo, saveSettings, exportBackup, clearData, confirmClearData,
     };
 
     (function init() {
@@ -1931,7 +2245,10 @@
         document.getElementById('sb-avatar').textContent = initials(SESSION.name);
         document.getElementById('sb-avatar').style.background = colorFor(SESSION.email);
         buildNav();
-        nav('dashboard');
+        let lastPage = 'dashboard';
+        try { lastPage = localStorage.getItem(LAST_PAGE_KEY) || 'dashboard'; } catch (e) { }
+        if (!NAV_ITEMS.some(it => it.id === lastPage)) lastPage = 'dashboard';
+        nav(lastPage);
       } else {
         icons();
       }
