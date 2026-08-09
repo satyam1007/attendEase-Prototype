@@ -982,12 +982,12 @@
       }).join('')}</div>`;
     }
     function statCard(label, val, icon, color) {
-      return `<div class="stat-card">
-    <div class="flex items-center justify-between mb-2">
-      <span class="text-xs font-semibold" style="color:var(--text-muted)">${label}</span>
-      <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:${color}22"><i data-lucide="${icon}" style="width:14px;height:14px;color:${color}"></i></div>
+      return `<div class="stat-card min-w-0">
+    <div class="flex items-center justify-between mb-2 gap-2">
+      <span class="text-xs font-semibold truncate" style="color:var(--text-muted)">${label}</span>
+      <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:${color}22"><i data-lucide="${icon}" style="width:14px;height:14px;color:${color}"></i></div>
     </div>
-    <p class="font-display font-bold text-2xl">${val}</p>
+    <p class="font-display font-bold text-xl sm:text-2xl break-words">${val}</p>
   </div>`;
     }
     function pulseStrip() {
@@ -1831,7 +1831,7 @@
       const el = document.getElementById('page-content');
       const today = todayStr();
       el.innerHTML = `
-  <div class="grid grid-cols-3 gap-3 mb-3">
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
     ${statCard('Total Collected', '₹' + DATA.students.reduce((a, s) => a + s.feePaid, 0).toLocaleString('en-IN'), 'wallet', 'var(--present)')}
     ${statCard('Pending Amount', '₹' + DATA.students.reduce((a, s) => a + (s.feeTotal - s.feePaid), 0).toLocaleString('en-IN'), 'clock', 'var(--leave)')}
     ${statCard('Overdue Students', DATA.students.filter(s => s.feeDue < today && s.feePaid < s.feeTotal).length, 'alert-triangle', 'var(--absent)')}
@@ -2018,8 +2018,10 @@
     </div>
     <p class="font-semibold mb-2">Overall Attendance: <span style="color:var(--primary)">${st.pct}%</span></p>
     <h4 class="font-semibold mt-4 mb-2">Marks</h4>
+    <div class="overflow-x-auto">
     <table><thead><tr><th>Subject</th><th>Exam</th><th>Score</th></tr></thead>
     <tbody>${stuMarks.map(m => { const sub = DATA.subjects.find(x => x.id === m.subjectId); return `<tr><td>${esc(sub?.name)}</td><td>${esc(m.examType)}</td><td>${m.score}/${m.maxScore}</td></tr>`; }).join('') || `<tr><td colspan="3" style="color:var(--text-muted)">No marks recorded</td></tr>`}</tbody></table>
+    </div>
     <p class="mt-4 font-semibold">Fee Status: ${feeBadge(feeStatusFor(s))}</p>
   </div>`;
     }
@@ -2062,10 +2064,12 @@
       <h3 class="font-display font-bold text-lg">${esc(DATA.meta.schoolName)}</h3>
       <p class="text-sm" style="color:var(--text-muted)">List of Candidates (LOC) — ${esc(cl?.name)} ${esc(cl?.section)}</p>
     </div>
-    <table>
-      <thead><tr><th>Roll No.</th><th>Candidate Name</th><th>Parent / Guardian</th><th>Class</th></tr></thead>
-      <tbody>${students.map(s => `<tr><td class="font-mono">${s.roll}</td><td>${esc(s.name)}</td><td>${esc(s.parentName)}</td><td>${esc(cl?.name)} ${esc(cl?.section)}</td></tr>`).join('') || `<tr><td colspan="4" class="text-center py-6" style="color:var(--text-muted)">No students</td></tr>`}</tbody>
-    </table>
+    <div class="overflow-x-auto">
+      <table>
+        <thead><tr><th>Roll No.</th><th>Candidate Name</th><th>Parent / Guardian</th><th>Class</th></tr></thead>
+        <tbody>${students.map(s => `<tr><td class="font-mono">${s.roll}</td><td>${esc(s.name)}</td><td>${esc(s.parentName)}</td><td>${esc(cl?.name)} ${esc(cl?.section)}</td></tr>`).join('') || `<tr><td colspan="4" class="text-center py-6" style="color:var(--text-muted)">No students</td></tr>`}</tbody>
+      </table>
+    </div>
   </div>`;
     }
     function setLocClass(v) { UI.locClass = v; paintReports(); }
