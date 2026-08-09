@@ -432,6 +432,15 @@
       transition: transform .2s ease;
     }
 
+    @media(min-width:1024px) {
+      #sidebar {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        overflow-y: auto;
+      }
+    }
+
     .day-dot {
       width: 9px;
       height: 9px;
@@ -951,7 +960,8 @@
       ${dashboardPerformanceHtml()}
     </div>
     <div class="card p-5">
-      <h3 class="font-display font-bold mb-3">14-Day Pulse</h3>
+      <h3 class="font-display font-bold mb-1">14-Day Pulse</h3>
+      <p class="text-xs mb-3" style="color:var(--text-muted)">Each dot = one of the last 14 days' overall attendance. Green &gt;85% present, Yellow 60–85%, Red &lt;60%, Purple = holiday, Grey = not marked. Hover a dot for the date.</p>
       <div class="flex gap-1.5 flex-wrap">${pulseStrip()}</div>
     </div>
   </div>`;
@@ -1442,46 +1452,69 @@
     }
 
     function attendanceCalendarHtml() {
-      UI.calMonth = UI.calMonth || new Date().getMonth();
-      UI.calYear = UI.calYear || new Date().getFullYear();
+      UI.calMonth = UI.calMonth ?? new Date().getMonth();
+      UI.calYear = UI.calYear ?? new Date().getFullYear();
+      const classId = UI.attendance.classId;
       const first = new Date(UI.calYear, UI.calMonth, 1);
       const startDow = first.getDay();
       const daysInMonth = new Date(UI.calYear, UI.calMonth + 1, 0).getDate();
       const monthName = first.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      const today = todayStr();
       let cells = '';
       for (let i = 0; i < startDow; i++) cells += `<div></div>`;
       for (let day = 1; day <= daysInMonth; day++) {
         const ds = `${UI.calYear}-${String(UI.calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const hol = isHoliday(ds);
-        let color = 'var(--surface-2)', label = '';
-        if (hol) { color = 'var(--leave-soft)'; label = hol.reason; }
-        else if (DATA.attendance[ds]) {
-          let p = 0, t = 0; Object.values(DATA.attendance[ds]).forEach(cs => Object.values(cs).forEach(rec => Object.values(rec).forEach(s => { t++; if (s === 'present') p++; })));
-          if (t > 0) { color = p / t > 0.85 ? 'var(--present-soft)' : p / t > 0.6 ? 'var(--half-soft)' : 'var(--absent-soft)'; label = t + ' marked'; }
+        const future = ds > today;
+        const isToday = ds === today;
+        let color = 'var(--surface-2)', label = 'No data', clickable = !future;
+        if (hol) { color = 'var(--leave-soft)'; label = 'Holiday: ' + hol.reason; }
+        else if (future) { label = 'Upcoming'; }
+        else if (DATA.attendance[ds]?.[classId]) {
+          let p = 0, t = 0;
+          Object.values(DATA.attendance[ds][classId]).forEach(rec => Object.values(rec).forEach(s => { t++; if (s === 'present') p++; }));
+          if (t > 0) {
+            const pct = Math.round(p / t * 100);
+            color = pct > 85 ? 'var(--present-soft)' : pct > 60 ? 'var(--half-soft)' : 'var(--absent-soft)';
+            label = pct + '% present';
+          }
         }
-        const future = ds > todayStr();
-        cells += `<div class="rounded-xl p-2 text-left cursor-pointer" style="background:${color};min-height:64px;${future ? 'opacity:.4' : ''}" onclick="App.jumpToMark('${ds}')">
-      <span class="text-xs font-bold font-mono">${day}</span>${label ? `<p class="text-[10px] mt-1 truncate" style="color:var(--text-muted)">${esc(label)}</p>` : ''}
+        cells += `<div class="rounded-xl p-2 text-left ${clickable ? 'cursor-pointer' : ''}" title="${esc(label)}"
+        style="background:${color};min-height:64px;${future ? 'opacity:.45' : ''}${isToday ? ';outline:2px solid var(--primary);outline-offset:-2px' : ''}"
+        ${clickable ? `onclick="App.jumpToMark('${ds}')"` : ''}>
+      <span class="text-xs font-bold font-mono">${day}${isToday ? ' <span style=\'color:var(--primary)\'>•</span>' : ''}</span>
+      <p class="text-[10px] mt-1 truncate" style="color:var(--text-muted)">${esc(label)}</p>
     </div>`;
       }
+      const cl = DATA.classes.find(c => c.id === classId);
+      const years = Array.from({ length: 3 }, (_, i) => new Date().getFullYear() - 1 + i); // last year, this year, next year
       return `
   <div class="card p-5">
-    <div class="flex items-center gap-3 mb-4">
-      <button class="btn btn-ghost btn-sm p-2" onclick="App.calMove(-1)"><i data-lucide="chevron-left" style="width:16px;height:16px"></i></button>
-      <h3 class="font-display font-bold">${monthName}</h3>
-      <button class="btn btn-ghost btn-sm p-2" onclick="App.calMove(1)"><i data-lucide="chevron-right" style="width:16px;height:16px"></i></button>
-      <select class="!w-auto !py-1 ml-2" onchange="App.jumpToMonth(this.value)">
+    <div class="mb-4">
+      <h3 class="font-display font-bold mb-1">Attendance Calendar</h3>
+      <p class="text-xs" style="color:var(--text-muted)">Each date shows that day's attendance % for the selected class. Click a past or today's date to open/edit it. Future dates are locked until they arrive.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+      <div><label>Class</label><select onchange="App.setAttClass(this.value)">${DATA.classes.map(c => `<option value="${c.id}" ${c.id === classId ? 'selected' : ''}>${esc(c.name)} ${esc(c.section)}</option>`).join('')}</select></div>
+      <div class="flex items-center gap-1">
+        <button class="btn btn-ghost btn-sm p-2" onclick="App.calMove(-1)"><i data-lucide="chevron-left" style="width:16px;height:16px"></i></button>
+        <span class="font-display font-bold px-1 min-w-[150px] text-center">${monthName}</span>
+        <button class="btn btn-ghost btn-sm p-2" onclick="App.calMove(1)"><i data-lucide="chevron-right" style="width:16px;height:16px"></i></button>
+      </div>
+      <select class="!w-auto !py-1.5" onchange="App.jumpToMonth(this.value)">
         ${Array.from({ length: 12 }, (_, m) => `<option value="${m}" ${m === UI.calMonth ? 'selected' : ''}>${new Date(2000, m, 1).toLocaleDateString('en-IN', { month: 'long' })}</option>`).join('')}
       </select>
-      <select class="!w-auto !py-1" onchange="App.jumpToYear(this.value)">
-        ${Array.from({ length: 9 }, (_, i) => UI.calYear - 4 + i).map(y => `<option value="${y}" ${y === UI.calYear ? 'selected' : ''}>${y}</option>`).join('')}
+      <select class="!w-auto !py-1.5" onchange="App.jumpToYear(this.value)">
+        ${years.map(y => `<option value="${y}" ${y === UI.calYear ? 'selected' : ''}>${y}</option>`).join('')}
       </select>
-      <div class="ml-auto flex gap-3 text-xs" style="color:var(--text-muted)">
-        <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--present)"></span>Good</span>
-        <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--half)"></span>Average</span>
-        <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--absent)"></span>Low</span>
-        <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--leave)"></span>Holiday</span>
-      </div>
+      <button class="btn btn-outline btn-sm" onclick="App.jumpToMonth(${new Date().getMonth()});App.jumpToYear(${new Date().getFullYear()})">Today</button>
+    </div>
+    <div class="flex flex-wrap items-center gap-4 text-xs mb-3" style="color:var(--text-muted)">
+      <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--present)"></span>Good (&gt;85% present)</span>
+      <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--half)"></span>Average (60–85% present)</span>
+      <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--absent)"></span>Low (&lt;60% present)</span>
+      <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--leave)"></span>Holiday</span>
+      <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--surface-3,#ccc);border:1px solid var(--border)"></span>No data / Upcoming</span>
     </div>
     <div class="grid grid-cols-7 gap-1.5 mb-1 text-xs font-bold text-center" style="color:var(--text-faint)">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => `<div>${d}</div>`).join('')}</div>
     <div class="grid grid-cols-7 gap-1.5">${cells}</div>
@@ -1798,10 +1831,16 @@
       const el = document.getElementById('page-content');
       const today = todayStr();
       el.innerHTML = `
-  <div class="grid grid-cols-3 gap-3 mb-5">
+  <div class="grid grid-cols-3 gap-3 mb-3">
     ${statCard('Total Collected', '₹' + DATA.students.reduce((a, s) => a + s.feePaid, 0).toLocaleString('en-IN'), 'wallet', 'var(--present)')}
     ${statCard('Pending Amount', '₹' + DATA.students.reduce((a, s) => a + (s.feeTotal - s.feePaid), 0).toLocaleString('en-IN'), 'clock', 'var(--leave)')}
     ${statCard('Overdue Students', DATA.students.filter(s => s.feeDue < today && s.feePaid < s.feeTotal).length, 'alert-triangle', 'var(--absent)')}
+  </div>
+  <div class="flex flex-wrap gap-4 text-xs mb-5" style="color:var(--text-muted)">
+    <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--present)"></span>Paid — full fee received</span>
+    <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--leave)"></span>Partial — some amount received, balance left</span>
+    <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--absent)"></span>Pending — nothing received yet</span>
+    <span class="flex items-center gap-1"><span class="badge-dot" style="background:var(--absent)"></span>Overdue — due date has passed and fee isn't fully paid</span>
   </div>
   <div class="card overflow-x-auto">
     <table>
@@ -1988,7 +2027,7 @@
 
     function leaderboardHtml() {
       const rows = DATA.students.map(s => ({ s, st: studentAttendanceStats(s.id) })).filter(r => r.st.total > 0).sort((a, b) => b.st.pct - a.st.pct);
-      const best = rows.slice(0, 3).map(r => r.s.id), worst = rows.slice(-3).map(r => r.s.id);
+      const best = rows.slice(0, 3).map(r => r.s.id);
       return `
   <div class="flex justify-end mb-3 gap-2">
     <button class="btn btn-outline btn-sm" onclick="App.exportLeaderboardPDF()"><i data-lucide="file-text" style="width:13px;height:13px"></i>PDF</button>
@@ -1999,7 +2038,7 @@
       <thead><tr><th>Rank</th><th>Student</th><th>Class</th><th>Attendance %</th><th>Tag</th></tr></thead>
       <tbody>${rows.map((r, i) => {
         const cl = DATA.classes.find(c => c.id === r.s.classId);
-        const tag = best.includes(r.s.id) ? '<span class="pill" style="background:var(--present-soft);color:var(--present)">Best</span>' : worst.includes(r.s.id) ? '<span class="pill" style="background:var(--absent-soft);color:var(--absent)">Needs Attention</span>' : '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">Average</span>';
+        const tag = best.includes(r.s.id) ? '<span class="pill" style="background:var(--present-soft);color:var(--present)">Best</span>' : r.st.pct < 75 ? '<span class="pill" style="background:var(--absent-soft);color:var(--absent)">Needs Attention</span>' : '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">Average</span>';
         return `<tr><td class="font-mono">#${i + 1}</td><td><div class="flex items-center gap-2">${avatarHtml(r.s, 26)}${esc(r.s.name)}</div></td><td>${esc(cl?.name)} ${esc(cl?.section)}</td><td class="font-bold">${r.st.pct}%</td><td>${tag}</td></tr>`;
       }).join('') || `<tr><td colspan="5" class="text-center py-8" style="color:var(--text-muted)">No attendance data yet</td></tr>`}</tbody>
     </table>
